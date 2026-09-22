@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">
+<title>Crossword</title>
+<style>
+body{margin:0;background:#e9e9e9;font-family:Arial,sans-serif;color:#111}
+header{position:sticky;top:0;z-index:10;background:white;padding:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-bottom:1px solid #aaa}
+button,.pick{font-size:16px;padding:10px 12px;border:1px solid #888;border-radius:6px;background:#fafafa;cursor:pointer}
+input[type=file]{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+#status{font-size:14px}
+#stage{position:relative;margin:12px auto;width:min(96vw,1000px);background:white;box-shadow:0 1px 5px #999}
+#paper{display:block;width:100%;height:auto} #paper.picking{cursor:crosshair}
+#overlay{position:absolute;display:none;z-index:5;pointer-events:auto}
+.cell{position:absolute;z-index:6;box-sizing:border-box;border:1px solid rgba(38,117,216,.18);cursor:pointer;touch-action:manipulation}
+.cell.word{background:rgba(255,215,70,.18)}
+.cell.active{outline:3px solid #2675d8;outline-offset:-3px;background:rgba(38,117,216,.16)}
+.letter{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding-top:9%;font-weight:700;color:#0645ad;line-height:1;pointer-events:none}
+#help{max-width:950px;margin:12px auto 30px;padding:0 12px;font-size:14px;line-height:1.45}
+canvas{display:none}
+@media print{header,#help{display:none}body{background:white}#stage{width:100%;margin:0;box-shadow:none}.cell.active{outline:none;background:transparent}}
+</style>
+</head>
+<body>
+<header>
+<label class="pick">Open Crossword
+<input id="file" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif">
+</label>
+<label class="pick">iPhone Photo
+<input id="photoFile" type="file" accept="image/*">
+</label>
+<label>Rows <input id="rows" type="number" min="3" max="40" value="15" style="width:52px;font:inherit;padding:6px"></label>
+<label>Columns <input id="cols" type="number" min="3" max="40" value="15" style="width:52px;font:inherit;padding:6px"></label>
+<button id="manual" disabled>Set Grid Corners</button>
+<button id="save" disabled>Save Crossword</button>
+<button id="resume">Resume Last</button>
+<label class="pick">Open Saved
+<input id="savedFile" type="file" accept=".json,application/json">
+</label>
+<button id="dir">Across</button>
+<button id="clear">Clear</button>
+<button id="print">Print</button>
+<span id="status">Open a screenshot or image.</span>
+</header>
+
+<div id="stage"><img id="paper" alt=""><div id="overlay"></div></div>
+<div id="help">
+<b>iPhone:</b> try <b>iPhone Photo</b> and choose the screenshot from Photos. If it is stored in Files, use <b>Open Crossword</b>.<br><b>Daily use:</b> take a screenshot and press <b>Open Crossword</b>. Enter the number of
+<b>Rows</b> and <b>Columns</b> in the grid (the normal daily NYT puzzle is 15 × 15; Sunday is typically 21 × 21), then press
+<b>Set Grid Corners</b>.
+Click the outside top-left and bottom-right corners of the grid. Tap/click a square and type.
+The current Across/Down answer is lightly highlighted; tap the selected square, press Space, or use the Across/Down button to change direction.
+<b>Save Crossword</b> creates one saved file containing the image, grid and your answers; <b>Open Saved</b> resumes it later. <b>Resume Last</b> restores the browser's automatic save after closing and reopening this page.
+The image and answers stay on your device.
+</div>
+<canvas id="cv"></canvas>
+<input id="kbd" inputmode="text" autocomplete="off" autocapitalize="characters"
+style="position:fixed;opacity:0;width:1px;height:1px;left:-20px;top:0">
+
+<script>
+let ROWS=15, COLS=15;
+const file=document.getElementById('file'), img=document.getElementById('paper');
+const overlay=document.getElementById('overlay'), cv=document.getElementById('cv');
+const ctx=cv.getContext('2d',{willReadFrequently:true}), statusEl=document.getElementById('status');
+const kbd=document.getElementById('kbd');
+let direction='across',active=null,cells=[],blocked=[],grid=null,lastURL=null,manualMode=false,corner1=null;
+
+function loadImageFile(f){
+ if(!f)return;
+ statusEl.textContent='Loading image…';
+ const reader=new FileReader();
+ reader.onerror=()=>statusEl.textContent='Could not read that image. Try saving the screenshot to Files as PNG/JPEG.';
+ reader.onload=()=>{
+   img.onload=()=>{
+     overlay.style.display='none';
+     document.getElementById('manual').disabled=false;
+     statusEl.textContent='Image loaded — click Set Grid Corners.';
+   };
+   img.onerror=()=>statusEl.textContent='Image selected, but Safari could not display it. Try a PNG or JPEG screenshot.';
+   img.src=reader.result;
+ };
+ reader.readAsDataURL(f);
+}
+file.addEventListener('change',e=>loadImageFile(e.target.files&&e.target.files[0]));
+document.getElementById('photoFile').addEventListener('change',e=>loadImageFile(e.target.files&&e.target.files[0]));
+
+function getGray(){
+ cv.width=img.naturalWidth;cv.height=img.naturalHeight;ctx.drawImage(img,0,0);
+ const d=ctx.getImageData(0,0,cv.width,cv.height).data,g=new Uint8Array(cv.width*cv.height);
+ for(let i=0,j=0;i<d.length;i+=4,j++)g[j]=(d[i]*.299+d[i+1]*.587+d[i+2]*.114)|0;
+ return g;
+}
+function verticalScore(g,w,h,x,y0,y1){
+ let n=0,d=0;for(let y=Math.max(0,y0);y<Math.min(h,y1);y++){n++;if(g[y*w+x]<120)d++}return d/Math.max(1,n)
+}
+function horizontalScore(g,w,h,y,x0,x1){
+ let n=0,d=0;for(let x=Math.max(0,x0);x<Math.min(w,x1);x++){n++;if(g[y*w+x]<120)d++}return d/Math.max(1,n)
+}
+
+/* Find repeated horizontal/vertical grid lines rather than depending on a fixed page position. */
+function detectGrid(){
+ const g=getGray(),w=cv.width,h=cv.height;
+
+ // Count dark pixels in each complete row/column. A crossword grid produces
+ // 22 nearly equally spaced peaks in BOTH directions.
+ let rc=new Float64Array(h), cc=new Float64Array(w);
+ for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+   if(g[y*w+x]<135){rc[y]++;cc[x]++}
+ }
+
+ function peaks(arr,minScore){
+   let out=[],i=0;
+   while(i<arr.length){
+     if(arr[i]<minScore){i++;continue}
+     let st=i,best=i,bv=arr[i];
+     while(i+1<arr.length && arr[i+1]>=minScore*.72){
+       i++; if(arr[i]>bv){bv=arr[i];best=i}
+     }
+     out.push({p:best,v:bv});i++;
+   }
+   return out;
+ }
+
+ // Generous thresholds: later equal-spacing test rejects text lines.
+ let rp=peaks(rc,w*.22), cp=peaks(cc,h*.14);
+
+ function findSequence(pk, axisLength){
+   let best=null;
+   // Search plausible crossword cell pitch.
+   for(let pitch=Math.max(8,axisLength/80);pitch<=axisLength/18;pitch+=.25){
+     let span=pitch*COLS;
+     if(span>axisLength*.95)continue;
+     for(const first of pk){
+       let start=first.p, score=0, err=0, matched=0;
+       for(let k=0;k<=COLS;k++){
+         let target=start+k*pitch, nearest=null,dist=1e9;
+         for(const q of pk){
+           let d=Math.abs(q.p-target);
+           if(d<dist){dist=d;nearest=q}
+         }
+         if(dist<=Math.max(2.5,pitch*.18)){
+           matched++;score+=nearest.v;err+=dist;
+         }
+       }
+       if(matched>=18){
+         let quality=matched*1000 + score - err*50 + span*.2;
+         if(!best||quality>best.quality)best={start,pitch,span,matched,quality};
+       }
+     }
+   }
+   return best;
+ }
+
+ let xs=findSequence(cp,w), ys=findSequence(rp,h);
+ if(!xs||!ys){
+   statusEl.textContent="Grid not found. Make sure the complete 21×21 grid is visible.";
+   overlay.style.display='none';return;
+ }
+
+ // Crossword cells should be close to square. If independent searches chose
+ // different pitches, use the stronger common pitch and re-fit the other axis.
+ let pitch=(xs.pitch+ys.pitch)/2;
+ if(Math.abs(xs.pitch-ys.pitch)/pitch>.12){
+   statusEl.textContent="Grid detection was uncertain. Try a screenshot showing the full grid clearly.";
+   overlay.style.display='none';return;
+ }
+
+ // Snap each outer edge to the nearest strong peak around the predicted location.
+ function snap(pk,target,tol){
+   let b=target,bd=1e9;
+   for(const q of pk){let d=Math.abs(q.p-target);if(d<bd&&d<=tol){bd=d;b=q.p}}
+   return b;
+ }
+ let x0=snap(cp,xs.start,pitch*.3), x1=snap(cp,xs.start+COLS*xs.pitch,pitch*.3);
+ let y0=snap(rp,ys.start,pitch*.3), y1=snap(rp,ys.start+ROWS*ys.pitch,pitch*.3);
+
+ grid={x:x0,y:y0,w:x1-x0,h:y1-y0};
+ buildGrid(g,w,h);
+ statusEl.textContent='Ready — grid aligned. Tap/click a white square and type.';
+}
+function startManual(){
+ ROWS=Math.max(3,Math.min(40,parseInt(document.getElementById('rows').value)||15));
+ COLS=Math.max(3,Math.min(40,parseInt(document.getElementById('cols').value)||15));
+ document.getElementById('rows').value=ROWS; document.getElementById('cols').value=COLS;
+ manualMode=true;corner1=null;overlay.style.display='none';
+ img.classList.add('picking');
+ statusEl.textContent='Click the TOP-LEFT outside corner of the crossword grid.';
+}
+img.addEventListener('click',e=>{
+ if(!manualMode)return;
+ const rect=img.getBoundingClientRect();
+ const x=(e.clientX-rect.left)*img.naturalWidth/rect.width;
+ const y=(e.clientY-rect.top)*img.naturalHeight/rect.height;
+ if(!corner1){
+   corner1={x,y};
+   statusEl.textContent='Now click the BOTTOM-RIGHT outside corner of the crossword grid.';
+ }else{
+   let x0=Math.min(corner1.x,x), y0=Math.min(corner1.y,y);
+   let x1=Math.max(corner1.x,x), y1=Math.max(corner1.y,y);
+   grid={x:x0,y:y0,w:x1-x0,h:y1-y0};
+   manualMode=false;img.classList.remove('picking');
+   const g=getGray();
+   buildGrid(g,cv.width,cv.height);
+   document.getElementById('save').disabled=false;statusEl.textContent='Ready — tap/click a white square and type.';
+ }
+});
+
+function buildGrid(g,w,h){
+ overlay.innerHTML='';cells=[];blocked=[];
+ overlay.style.left=(grid.x/w*100)+'%';overlay.style.top=(grid.y/h*100)+'%';
+ overlay.style.width=(grid.w/w*100)+'%';overlay.style.height=(grid.h/h*100)+'%';overlay.style.display='block';
+ for(let r=0;r<ROWS;r++){cells[r]=[];blocked[r]=[];
+   for(let c=0;c<COLS;c++){
+     let cx=grid.x+(c+.5)*grid.w/COLS,cy=grid.y+(r+.5)*grid.h/ROWS,dx=grid.w/COLS*.20,dy=grid.h/ROWS*.20;
+     let dark=0,total=0;
+     for(let yy=Math.floor(cy-dy);yy<=cy+dy;yy+=2)for(let xx=Math.floor(cx-dx);xx<=cx+dx;xx+=2){
+       let X=Math.max(0,Math.min(w-1,xx)),Y=Math.max(0,Math.min(h-1,yy));total++;if(g[Y*w+X]<90)dark++;
+     }
+     let isBlack=dark/total>.55;blocked[r][c]=isBlack;
+     if(isBlack){cells[r][c]=null;continue}
+     let d=document.createElement('div');d.className='cell';
+     d.style.left=(c*100/COLS)+'%';d.style.top=(r*100/ROWS)+'%';d.style.width=(100/COLS)+'%';d.style.height=(100/ROWS)+'%';
+     let l=document.createElement('div');l.className='letter';l.style.fontSize='clamp(10px,2.5vw,22px)';d.appendChild(l);
+     d.addEventListener('click',()=>select(r,c,true));overlay.appendChild(d);cells[r][c]=d;
+   }
+ }
+ active=null;statusEl.textContent='Ready — tap/click a white square and type.';
+}
+
+function highlightWord(){
+ document.querySelectorAll('.cell.word').forEach(x=>x.classList.remove('word'));
+ if(!active)return;
+ let r=active.r,c=active.c, dr=direction==='down'?1:0, dc=direction==='across'?1:0;
+ let sr=r,sc=c;
+ while(sr-dr>=0&&sc-dc>=0&&!blocked[sr-dr][sc-dc]){sr-=dr;sc-=dc}
+ while(sr<ROWS&&sc<COLS&&!blocked[sr][sc]){
+   if(cells[sr][sc])cells[sr][sc].classList.add('word');
+   sr+=dr;sc+=dc;
+ }
+}
+function updateDir(){document.getElementById('dir').textContent=direction==='across'?'Across':'Down';highlightWord()}
+function toggleDir(){direction=direction==='across'?'down':'across';updateDir()}
+function select(r,c,toggle=false){
+ if(blocked[r]?.[c])return;
+ if(active&&active.r===r&&active.c===c&&toggle)toggleDir();
+ if(active&&cells[active.r][active.c])cells[active.r][active.c].classList.remove('active');
+ active={r,c};cells[r][c].classList.add('active');highlightWord();kbd.focus();
+}
+function move(step){
+ if(!active)return;let r=active.r,c=active.c;
+ do{if(direction==='across')c+=step;else r+=step;if(r<0||r>=ROWS||c<0||c>=COLS)return}while(blocked[r][c]);
+ select(r,c,false)
+}
+function autoSave(){try{if(grid)localStorage.setItem('crossword-autosave',JSON.stringify(crosswordState()))}catch(e){}}
+function putLetter(ch){if(!active)return;cells[active.r][active.c].querySelector('.letter').textContent=ch.toUpperCase();autoSave();move(1)}
+
+document.addEventListener('keydown',e=>{
+ if(!active)return;
+ if(/^[a-z]$/i.test(e.key)){putLetter(e.key);e.preventDefault()}
+ else if(e.key==='Backspace'){let l=cells[active.r][active.c].querySelector('.letter');if(l.textContent)l.textContent='';else{move(-1);if(active)cells[active.r][active.c].querySelector('.letter').textContent=''}autoSave();e.preventDefault()}
+ else if(e.key===' '){toggleDir();e.preventDefault()}
+ else if(e.key==='ArrowRight'){direction='across';updateDir();move(1);e.preventDefault()}
+ else if(e.key==='ArrowLeft'){direction='across';updateDir();move(-1);e.preventDefault()}
+ else if(e.key==='ArrowDown'){direction='down';updateDir();move(1);e.preventDefault()}
+ else if(e.key==='ArrowUp'){direction='down';updateDir();move(-1);e.preventDefault()}
+});
+kbd.addEventListener('input',()=>{let s=kbd.value.replace(/[^a-z]/ig,'');if(s)putLetter(s.slice(-1));kbd.value=''});
+
+function crosswordState(){
+ let letters=[];
+ for(let r=0;r<ROWS;r++){letters[r]=[];for(let c=0;c<COLS;c++)
+   letters[r][c]=cells[r]?.[c]?.querySelector('.letter')?.textContent||'';
+ }
+ return {version:2,image:img.src,grid,blocked,letters,rows:ROWS,cols:COLS};
+}
+function saveCrossword(){
+ if(!grid)return;
+ const blob=new Blob([JSON.stringify(crosswordState())],{type:'application/json'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+ a.download='crossword-saved.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function restoreState(st,message){
+ if(!st.image||!st.grid||!st.letters)throw Error('Incomplete save');
+ img.onload=()=>{
+   ROWS=st.rows||21; COLS=st.cols||21;
+   document.getElementById('rows').value=ROWS; document.getElementById('cols').value=COLS;
+   grid=st.grid;
+   const g=getGray();buildGrid(g,cv.width,cv.height);
+   for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)
+     if(cells[r]?.[c]&&st.letters[r]?.[c])cells[r][c].querySelector('.letter').textContent=st.letters[r][c];
+   document.getElementById('manual').disabled=false;document.getElementById('save').disabled=false;
+   statusEl.textContent=message||'Crossword restored.';
+ };
+ img.src=st.image;
+}
+document.getElementById('savedFile').addEventListener('change',e=>{
+ const f=e.target.files[0];if(!f)return;
+ const reader=new FileReader();
+ reader.onload=()=>{
+   try{restoreState(JSON.parse(reader.result),'Saved crossword restored.')}
+   catch(err){alert('That saved crossword cannot be restored. An older save may contain a temporary image reference.')}
+ };
+ reader.readAsText(f);
+});
+document.getElementById('manual').onclick=startManual;
+document.getElementById('save').onclick=saveCrossword;
+document.getElementById('resume').onclick=()=>{
+ try{
+   const raw=localStorage.getItem('crossword-autosave');
+   if(!raw){alert('No autosaved crossword was found in this browser.');return}
+   restoreState(JSON.parse(raw),'Last crossword resumed.');
+ }catch(e){alert('The previous autosave cannot be restored.')}
+};
+document.getElementById('dir').onclick=toggleDir;
+document.getElementById('clear').onclick=()=>{if(confirm('Clear all entered letters?'))document.querySelectorAll('.letter').forEach(x=>x.textContent='');autoSave()};
+document.getElementById('print').onclick=()=>window.print();
+</script>
+</body>
+</html>
