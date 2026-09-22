@@ -34,16 +34,16 @@ canvas{display:none}
 </head>
 <body>
 <header>
-<label class="pick">New Puzzle
+<label class="pick">Puzzle Graphic
 <input id="file" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif">
 </label>
 <label>Rows <input id="rows" type="number" min="3" max="40" value="15" style="width:52px;font:inherit;padding:6px"></label>
 <label>Columns <input id="cols" type="number" min="3" max="40" value="15" style="width:52px;font:inherit;padding:6px"></label>
 <button id="manual" disabled>Set Grid Corners</button>
-<button id="save" disabled>Save Puzzle</button>
+<button id="save" disabled>Save Crossword</button>
 <button id="resume">Resume Last</button>
 <label class="pick">Open Saved
-<input id="savedFile" type="file" accept=".cwd,.json,application/json">
+<input id="savedFile" type="file" accept=".json,application/json">
 </label>
 <button id="dir">Across</button>
 <button id="clear">Clear</button>
@@ -53,12 +53,12 @@ canvas{display:none}
 
 <div id="stage"><img id="paper" alt=""><div id="overlay"></div></div>
 <div id="help">
-<b>New puzzle:</b> press <b>New Puzzle</b> and choose the puzzle screenshot from Photos or Files. Enter the number of
+<b>Daily use:</b> take a screenshot of the puzzle and press <b>Puzzle Graphic</b>. Choose the image from Photos or Files. Enter the number of
 <b>Rows</b> and <b>Columns</b> in the grid (the normal daily NYT puzzle is 15 × 15; Sunday is typically 21 × 21), then press
 <b>Set Grid Corners</b>.
 Click the outside top-left and bottom-right corners of the grid. Tap/click a square and type.
 The current Across/Down answer is lightly highlighted; tap the selected square, press Space, or use the Across/Down button to change direction.
-<b>Save Puzzle</b> creates one puzzle file containing the image, grid and your answers; <b>Open Puzzle</b> resumes it later. <b>Resume Last</b> restores the browser's automatic save after closing and reopening this page.
+<b>Save Crossword</b> creates one saved file containing the image, grid and your answers; <b>Open Saved</b> resumes it later. <b>Resume Last</b> restores the browser's automatic save after closing and reopening this page.
 The image and answers stay on your device.
 </div>
 <canvas id="cv"></canvas>
@@ -278,13 +278,13 @@ function crosswordState(){
  for(let r=0;r<ROWS;r++){letters[r]=[];for(let c=0;c<COLS;c++)
    letters[r][c]=cells[r]?.[c]?.querySelector('.letter')?.textContent||'';
  }
- return {version:3,image:img.src,grid,blocked,letters,rows:ROWS,cols:COLS};
+ return {version:2,image:img.src,grid,blocked,letters,rows:ROWS,cols:COLS};
 }
 function saveCrossword(){
  if(!grid)return;
  const blob=new Blob([JSON.stringify(crosswordState())],{type:'application/json'});
  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
- a.download='crossword-saved.cwd';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+ a.download='crossword-saved.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 function restoreState(st,message){
  if(!st.image||!st.grid||!st.letters)throw Error('Incomplete save');
