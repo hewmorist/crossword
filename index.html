@@ -37,8 +37,8 @@ canvas{display:none}
 <label class="pick">Puzzle Graphic
 <input id="file" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.heic,.heif">
 </label>
-<label>Rows <input id="rows" type="number" min="3" max="40" value="15" style="width:52px;font:inherit;padding:6px"></label>
-<label>Columns <input id="cols" type="number" min="3" max="40" value="15" style="width:52px;font:inherit;padding:6px"></label>
+<label>Rows <input id="rows" type="number" min="3" max="30" value="15" style="width:52px;font:inherit;padding:6px"></label>
+<label>Columns <input id="cols" type="number" min="3" max="30" value="15" style="width:52px;font:inherit;padding:6px"></label>
 <button id="manual" disabled>Set Grid Corners</button>
 <button id="save" disabled>Save Crossword</button>
 <button id="resume">Resume Last</button>
@@ -54,7 +54,7 @@ canvas{display:none}
 <div id="stage"><img id="paper" alt=""><div id="overlay"></div></div>
 <div id="help">
 <b>Daily use:</b> take a screenshot of the puzzle and press <b>Puzzle Graphic</b>. Choose the image from Photos or Files. Enter the number of
-<b>Rows</b> and <b>Columns</b> in the grid (the normal daily NYT puzzle is 15 × 15; Sunday is typically 21 × 21), then press
+<b>Rows</b> and <b>Columns</b> in the grid (the normal daily NYT puzzle is 15 × 15; Sunday is typically 21 × 21; grids up to 30 × 30 are supported), then press
 <b>Set Grid Corners</b>.
 Click the outside top-left and bottom-right corners of the grid. Tap/click a square and type.
 The current Across/Down answer is lightly highlighted; tap the selected square, press Space, or use the Across/Down button to change direction.
@@ -131,15 +131,15 @@ function detectGrid(){
  // Generous thresholds: later equal-spacing test rejects text lines.
  let rp=peaks(rc,w*.22), cp=peaks(cc,h*.14);
 
- function findSequence(pk, axisLength){
+ function findSequence(pk, axisLength, cellCount){
    let best=null;
    // Search plausible crossword cell pitch.
    for(let pitch=Math.max(8,axisLength/80);pitch<=axisLength/18;pitch+=.25){
-     let span=pitch*COLS;
+     let span=pitch*cellCount;
      if(span>axisLength*.95)continue;
      for(const first of pk){
        let start=first.p, score=0, err=0, matched=0;
-       for(let k=0;k<=COLS;k++){
+       for(let k=0;k<=cellCount;k++){
          let target=start+k*pitch, nearest=null,dist=1e9;
          for(const q of pk){
            let d=Math.abs(q.p-target);
@@ -149,7 +149,7 @@ function detectGrid(){
            matched++;score+=nearest.v;err+=dist;
          }
        }
-       if(matched>=18){
+       if(matched>=Math.max(4,Math.ceil((cellCount+1)*.75))){
          let quality=matched*1000 + score - err*50 + span*.2;
          if(!best||quality>best.quality)best={start,pitch,span,matched,quality};
        }
@@ -158,9 +158,9 @@ function detectGrid(){
    return best;
  }
 
- let xs=findSequence(cp,w), ys=findSequence(rp,h);
+ let xs=findSequence(cp,w,COLS), ys=findSequence(rp,h,ROWS);
  if(!xs||!ys){
-   statusEl.textContent="Grid not found. Make sure the complete 21×21 grid is visible.";
+   statusEl.textContent="Grid not found. Make sure the complete crossword grid is visible.";
    overlay.style.display='none';return;
  }
 
@@ -186,8 +186,8 @@ function detectGrid(){
  statusEl.textContent='Ready — grid aligned. Tap/click a white square and type.';
 }
 function startManual(){
- ROWS=Math.max(3,Math.min(40,parseInt(document.getElementById('rows').value)||15));
- COLS=Math.max(3,Math.min(40,parseInt(document.getElementById('cols').value)||15));
+ ROWS=Math.max(3,Math.min(30,parseInt(document.getElementById('rows').value)||15));
+ COLS=Math.max(3,Math.min(30,parseInt(document.getElementById('cols').value)||15));
  document.getElementById('rows').value=ROWS; document.getElementById('cols').value=COLS;
  manualMode=true;corner1=null;overlay.style.display='none';
  img.classList.add('picking');
